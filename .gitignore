@@ -1,0 +1,6 @@
+.DS_Store
+*.png
+*.swift.tmp
+boss_ocr.*.swift
+b.*.png
+b.*.txt
