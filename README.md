@@ -9,7 +9,9 @@ Boss 直聘 Android 端**多关键词傻瓜式自动打招呼**脚本 —— 纯
 1. 点顶部 chip(`全栈工` / `JavaScript` / `Node` …)
 2. 切「最新」tab
 3. 下拉刷新
-4. 自上而下点 N 个岗位 → 点「立即沟通」→ 返回
+4. **只点标题命中关键字眼的岗位**(默认:`全栈` / `Node` / `PHP` / `JavaScript`,大小写不敏感)
+5. 点「立即沟通」(自动跳过「继续沟通」—— 已沟通过的不重发)
+6. 凑不够 N 条就**自动下拉刷新继续**,最多刷新 5 次
 
 完整闭环,人类节奏(每步 5-10s 随机等待)。
 
@@ -35,11 +37,36 @@ Boss 后台会枚举系统启用的无障碍服务,一旦发现 AutoX.js 即触�
 编辑 `boss.sh` 顶部:
 
 ```bash
-KEYWORDS=("全栈工" "JavaScript" "Node")   # OCR 子串匹配,"Node" 会命中 "Node.js"
-DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"      # adb devices 看你的序列号
+# 顶部 chip 关键词(子串匹配)
+KEYWORDS=("全栈工" "JavaScript" "Node")
+
+# 设备序列号(adb devices 看)
+DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
+
+# 岗位标题必须命中下列正则才点击(同 y 行任意文字命中即可)
+# 默认:全栈 / Node / PHP / JavaScript,大小写不敏感
+TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript'
+
+# 凑不够 PER_KW 条时最多下拉刷新次数
+MAX_REFRESH=5
 ```
 
-替换 `DEVICE` 为你的设备序列号(`adb devices` 的输出)。
+替换 `DEVICE` 为你的设备序列号。
+关键词 chip 和岗位标题筛选**互相独立**:chip 决定搜什么类别,`TITLE_REGEX` 在结果里再过一遍标题。
+
+### 自定义筛选示例
+
+只发 Java 后端:
+```bash
+KEYWORDS=("Java" "后端")
+TITLE_REGEX='[Jj]ava(?![Ss]cript)|后端|[Ss]pring'
+```
+
+只发 React/Vue 前端:
+```bash
+KEYWORDS=("前端" "React")
+TITLE_REGEX='[Rr]eact|[Vv]ue|前端'
+```
 
 ## 使用
 
@@ -92,7 +119,11 @@ OCR 在某些屏幕状态下会把「最新」误识别为 `I 取` / `1 取`。�
 
 ### 岗位选择
 
-按薪资行(`X-YK` 正则)纵向排序,从上往下数第 1, 2, 3 个,避免重复。
+1. OCR 出所有薪资行(`X-YK`),作为岗位锚点
+2. 对每个薪资行,看**同 y 行 ±25px** 内有没有命中 `TITLE_REGEX` 的文字
+3. 命中的取最上面那条,点 → 立即沟通 → back
+4. 凑不够 `PER_KW` 条时下拉刷新,从头扫一遍
+5. 检测到「继续沟通」按钮(已聊过)自动跳过,避免重发
 
 ### 反检测细节
 

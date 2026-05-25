@@ -13,10 +13,14 @@
 set -uo pipefail
 
 # ────── 在这里配置 ──────
-KEYWORDS=("全栈工" "JavaScript" "Node")    # OCR 子串匹配,Node 会匹配 Node.js / Node
+KEYWORDS=("全栈工" "JavaScript" "Node")    # 顶部 chip:OCR 子串匹配,Node 会匹配 Node.js / Node
 DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
 DRY_RUN="${DRY_RUN:-0}"
 PER_KW="${1:-3}"                            # 每个关键词发几条(默认 3)
+# 岗位标题必须命中下列正则才点击(同行 ±25px y 范围内任意文字命中即可)
+# 含:全栈 / node(覆盖 Node / NodeJS / Node.js)/ php(任意大小写)/ javascript(任意大小写)
+TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript'
+MAX_REFRESH=5                               # 凑不够 PER_KW 时最多下拉刷新次数
 # ─────────────────────
 
 # 内嵌 Swift OCR(返回 文字\tx\ty\tw\th)
@@ -141,34 +145,75 @@ for kw in "${KEYWORDS[@]}"; do
     adb_swipe 360 420 360 1200 800
     hwait
 
-    # 4. 依次点 PER_KW 个岗位 → 沟通
-    for ((i=1; i<=PER_KW; i++)); do
-        echo "  ─── 第 $i / $PER_KW 个岗位 ───"
-
+    # 4. 找标题命中 TITLE_REGEX 的岗位,凑够 PER_KW 个;不够就下拉刷新继续
+    clicked=0
+    refresh=0
+    skip=0
+    while (( clicked < PER_KW && refresh <= MAX_REFRESH )); do
         snap_ocr "$png" "$txt"
-        salary=$(awk -F'\t' '$1 ~ /^[0-9]+-[0-9]+K[[:space:]]*$/' "$txt" \
-            | sort -t$'\t' -k3 -n | sed -n "${i}p")
-        if [[ -z "$salary" ]]; then
-            echo "    ✗ 屏幕上不到 $i 个岗位,跳到下一个关键词"
-            break
+
+        # 对每条工资行(X-YK),看同 y(±25px)内有没有命中 TITLE_REGEX 的文字
+        # 输出:salary_text\tx\ty\tw\th\tmatched_title;取 y 最小(最上面)的一条
+        matched=$(awk -F'\t' -v kw="$TITLE_REGEX" '
+            { text[NR]=$1; x[NR]=$2; y[NR]=$3; w[NR]=$4; h[NR]=$5 }
+            END {
+                for (i=1; i<=NR; i++) {
+                    if (text[i] !~ /^[0-9]+-[0-9]+K[ \t]*$/) continue
+                    sy = y[i]
+                    for (j=1; j<=NR; j++) {
+                        if (j == i) continue
+                        if (y[j] < sy-25 || y[j] > sy+25) continue
+                        if (text[j] ~ kw) {
+                            print text[i]"\t"x[i]"\t"y[i]"\t"w[i]"\t"h[i]"\t"text[j]
+                            break
+                        }
+                    }
+                }
+            }
+        ' "$txt" | sort -t$'\t' -k3 -n | head -1)
+
+        if [[ -z "$matched" ]] || (( skip >= 2 )); then
+            reason="屏幕无匹配标题的岗位"
+            (( skip >= 2 )) && reason="连续 $skip 次卡同位置/无沟通按钮"
+            ((refresh++))
+            echo "    · $reason → 下拉刷新 ($refresh/$MAX_REFRESH)"
+            adb_swipe 360 420 360 1200 800
+            hwait
+            skip=0
+            continue
         fi
-        tap_line "$salary"
+
+        salary_line=$(echo "$matched" | cut -f1-5)
+        title=$(echo "$matched" | cut -f6)
+
+        echo "  ─── 第 $((clicked+1)) / $PER_KW 个岗位(命中标题:'$title')───"
+        tap_line "$salary_line"
         hwait
 
         snap_ocr "$png" "$txt"
-        btn=$(awk -F'\t' '$1 ~ /(立即|继续)沟通/' "$txt" | head -1)
+        # 只点「立即沟通」,「继续沟通」表示已聊过 → 跳过(避免重发)
+        btn=$(awk -F'\t' '$1 ~ /立即沟通/' "$txt" | head -1)
         if [[ -z "$btn" ]]; then
-            echo "    ✗ 没找到沟通按钮"
+            echo "    ✗ 没找到立即沟通(可能已沟通过/页面没加载好)"
             back_to_main; hwait
+            ((skip++))
             continue
         fi
         hwait
         tap_line "$btn"
         hwait
+        ((clicked++))
+        skip=0
 
         back_to_main
         hwait
     done
+
+    if (( clicked < PER_KW )); then
+        echo "  ⚠ 已刷新 $refresh 次仍不够,本关键词实际点击 $clicked / $PER_KW"
+    else
+        echo "  ✓ 本关键词完成 $clicked / $PER_KW"
+    fi
 done
 
 echo
