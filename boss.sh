@@ -18,8 +18,9 @@ DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
 DRY_RUN="${DRY_RUN:-0}"
 PER_KW="${1:-3}"                            # 每个关键词发几条(默认 3)
 # 岗位标题必须命中下列正则才点击(同行 ±25px y 范围内任意文字命中即可)
-# 含:全栈 / node(覆盖 Node / NodeJS / Node.js)/ php(任意大小写)/ javascript(任意大小写)
-TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript'
+# 含:全栈 / node(覆盖 Node / NodeJS / Node.js)/ php / javascript / ai(AI / Ai / aI / ai / AIGC / AIOps...)
+# AI 用「左单词边界」(前面必须不是字母),避免误伤 Trainee / Captain / Detail / Email / Maine 等
+TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript|(^|[^A-Za-z])[Aa][Ii]'
 MAX_REFRESH=5                               # 凑不够 PER_KW 时最多下拉刷新次数
 # ─────────────────────
 

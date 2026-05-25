@@ -44,8 +44,9 @@ KEYWORDS=("全栈工" "JavaScript" "Node")
 DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
 
 # 岗位标题必须命中下列正则才点击(同 y 行任意文字命中即可)
-# 默认:全栈 / Node / PHP / JavaScript,大小写不敏感
-TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript'
+# 默认:全栈 / Node / PHP / JavaScript / AI(含 AIGC, AIOps 等)
+# AI 用左单词边界(前面必须不是字母),避免误伤 Trainee / Captain / Detail / Email
+TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript|(^|[^A-Za-z])[Aa][Ii]'
 
 # 凑不够 PER_KW 条时最多下拉刷新次数
 MAX_REFRESH=5
