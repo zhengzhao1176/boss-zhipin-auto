@@ -108,10 +108,21 @@ for kw in "${KEYWORDS[@]}"; do
     echo "═══ 关键词: $kw ═══"
 
     # 1. 找 chip 并 tap(限制在 y<200 的顶部区域)
-    snap_ocr "$png" "$txt"
-    chip=$(awk -F'\t' -v k="$kw" '$3 < 200 && $1 ~ k' "$txt" | head -1)
+    # 若 chip 不在屏幕内,横扫 chip 栏右→左,让被隐藏的 chip 露出来,最多 4 次
+    chip=""
+    for attempt in 0 1 2 3 4; do
+        snap_ocr "$png" "$txt"
+        chip=$(awk -F'\t' -v k="$kw" '$3 < 200 && $1 ~ k' "$txt" | head -1)
+        [[ -n "$chip" ]] && break
+        if (( attempt < 4 )); then
+            echo "  · 没看到 '$kw' chip,横扫 chip 栏 ($((attempt+1))/4)"
+            # chip 栏在 y≈85-130,横扫 y=105 避开下面的城市/筛选行(y=170+)
+            adb_swipe 550 105 100 105 400
+            sleep 1.5
+        fi
+    done
     if [[ -z "$chip" ]]; then
-        echo "  ✗ 顶部找不到 '$kw' chip,跳过"
+        echo "  ✗ 横扫 4 次后仍找不到 '$kw' chip,跳过"
         continue
     fi
     echo "  ▸ tap 关键词 chip"
