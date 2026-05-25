@@ -17,11 +17,14 @@ KEYWORDS=("全栈工" "JavaScript" "Node")    # 顶部 chip:OCR 子串匹配,Nod
 DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
 DRY_RUN="${DRY_RUN:-0}"
 PER_KW="${1:-3}"                            # 每个关键词发几条(默认 3)
-# 岗位标题必须命中下列正则才点击(同行 ±25px y 范围内任意文字命中即可)
-# 含:全栈 / node(覆盖 Node / NodeJS / Node.js)/ php / javascript / ai(AI / Ai / aI / ai / AIGC / AIOps...)
-# AI 用「左单词边界」(前面必须不是字母),避免误伤 Trainee / Captain / Detail / Email / Maine 等
-TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript|(^|[^A-Za-z])[Aa][Ii]'
+# 岗位标题必须命中下列正则才点击(同 y 行任意文字命中即可)
+# 匹配时整段先转小写(全大小写不敏感),所以 pattern 写小写即可
+# 含:全栈 / node(覆盖 Node / node.js / Node.JS / NodeJS)/ php / javascript / ai(含 AIGC / AIOps)
+# AI 用「左单词边界」(前面必须不是字母),避免误伤 trainee / captain / detail / email / maine
+TITLE_REGEX='全栈|node|php|javascript|(^|[^a-z])ai'
 MAX_REFRESH=5                               # 凑不够 PER_KW 时最多下拉刷新次数
+# 已沟通公司历史文件(命中已记录公司自动跳过,成功后自动追加)
+CONTACTED_FILE="${CONTACTED_FILE:-$(dirname "${BASH_SOURCE[0]}")/boss_contacted.txt}"
 # ─────────────────────
 
 # 内嵌 Swift OCR(返回 文字\tx\ty\tw\th)
@@ -95,7 +98,19 @@ adb devices | grep -q "^${DEVICE}" || { echo "✗ 设备 $DEVICE 不在线" >&2;
 png=$(mktemp -t b.XXX.png); txt=$(mktemp -t b.XXX.txt)
 trap "rm -f '$OCR' '$png' '$txt'" EXIT
 
+# 已沟通公司查重(注:Mac bash 3.2 没有关联数组,直接 grep 文件)
+# -aF: -a 把含中文(多字节)的文件当文本处理,-F 字面字符串
+is_contacted() {
+    local c="$1"
+    [[ -z "$c" ]] && return 1
+    [[ ! -f "$CONTACTED_FILE" ]] && return 1
+    grep -aqF " | $c | " "$CONTACTED_FILE"
+}
+contacted_count=0
+[[ -f "$CONTACTED_FILE" ]] && contacted_count=$(grep -ac '^\[' "$CONTACTED_FILE" 2>/dev/null || echo 0)
+
 echo "════════ Boss 多关键词:${KEYWORDS[*]},每个 $PER_KW 条,DRY_RUN=$DRY_RUN ════════"
+echo "[历史] 已沟通 $contacted_count 家(命中已沟通公司自动跳过,记录:$CONTACTED_FILE)"
 
 # 确认在 Boss MainActivity
 snap_ocr "$png" "$txt"
@@ -107,22 +122,50 @@ for kw in "${KEYWORDS[@]}"; do
     echo
     echo "═══ 关键词: $kw ═══"
 
-    # 1. 找 chip 并 tap(限制在 y<200 的顶部区域)
-    # 若 chip 不在屏幕内,横扫 chip 栏右→左,让被隐藏的 chip 露出来,最多 4 次
+    # 1. 找 chip 并 tap
+    # Boss 主页 chip 栏只显示常用 2 个,完整历史只在「点过任一 chip 后的结果页」才显示
+    # 策略:先在当前页找;找不到则点任一可见 chip 进入结果页,再左右横扫定位
     chip=""
-    for attempt in 0 1 2 3 4; do
-        snap_ocr "$png" "$txt"
-        chip=$(awk -F'\t' -v k="$kw" '$3 < 200 && $1 ~ k' "$txt" | head -1)
-        [[ -n "$chip" ]] && break
-        if (( attempt < 4 )); then
-            echo "  · 没看到 '$kw' chip,横扫 chip 栏 ($((attempt+1))/4)"
-            # chip 栏在 y≈85-130,横扫 y=105 避开下面的城市/筛选行(y=170+)
-            adb_swipe 550 105 100 105 400
-            sleep 1.5
-        fi
-    done
+    snap_ocr "$png" "$txt"
+    chip=$(awk -F'\t' -v k="$kw" '$3 < 200 && $1 ~ k' "$txt" | head -1)
+
     if [[ -z "$chip" ]]; then
-        echo "  ✗ 横扫 4 次后仍找不到 '$kw' chip,跳过"
+        # 优先选 KEYWORDS 里的其他 chip 当 seed (避免污染 chip 历史)
+        # 例如找 Node 时,优先点 全栈工程师,而不是随便点 兼职 / 培训类 chip
+        seed=""
+        for other_kw in "${KEYWORDS[@]}"; do
+            [[ "$other_kw" == "$kw" ]] && continue
+            seed=$(awk -F'\t' -v k="$other_kw" '$3 > 70 && $3 < 140 && $2 < 500 && $4 > 50 && $1 ~ k' "$txt" | head -1)
+            [[ -n "$seed" ]] && break
+        done
+        # 兜底:任一可见 chip
+        if [[ -z "$seed" ]]; then
+            seed=$(awk -F'\t' '$3 > 70 && $3 < 140 && $2 < 500 && $4 > 50' "$txt" | head -1)
+        fi
+        if [[ -n "$seed" ]]; then
+            seed_text=$(echo "$seed" | cut -f1)
+            echo "  · 当前页没看到 '$kw',先点 '$seed_text' 展开完整 chip 历史"
+            tap_line "$seed"
+            hwait
+        fi
+        # 结果页 chip 栏支持横扫,试两个方向(共 8 次)
+        for attempt in 1 2 3 4 5 6 7 8; do
+            snap_ocr "$png" "$txt"
+            chip=$(awk -F'\t' -v k="$kw" '$3 < 200 && $1 ~ k' "$txt" | head -1)
+            [[ -n "$chip" ]] && break
+            if (( attempt <= 4 )); then
+                echo "  · 横扫 chip 栏 → 露出右侧 ($attempt/8)"
+                adb_swipe 550 105 100 105 400
+            else
+                echo "  · 横扫 chip 栏 ← 露出左侧 ($attempt/8)"
+                adb_swipe 100 105 550 105 400
+            fi
+            sleep 1.5
+        done
+    fi
+
+    if [[ -z "$chip" ]]; then
+        echo "  ✗ 找不到 '$kw' chip,跳过"
         continue
     fi
     echo "  ▸ tap 关键词 chip"
@@ -164,28 +207,59 @@ for kw in "${KEYWORDS[@]}"; do
     while (( clicked < PER_KW && refresh <= MAX_REFRESH )); do
         snap_ocr "$png" "$txt"
 
-        # 对每条工资行(X-YK),看同 y(±25px)内有没有命中 TITLE_REGEX 的文字
-        # 输出:salary_text\tx\ty\tw\th\tmatched_title;取 y 最小(最上面)的一条
-        matched=$(awk -F'\t' -v kw="$TITLE_REGEX" '
-            { text[NR]=$1; x[NR]=$2; y[NR]=$3; w[NR]=$4; h[NR]=$5 }
+        # 对每条工资行(X-YK):
+        #   - 同 y 行(±25px)看是否命中 TITLE_REGEX → 提取 title
+        #   - 标题正下方 35-85px 处看公司行(用于去重)
+        # 输出: salary_text\tx\ty\tw\th\ttitle\tcompany_raw
+        matches=$(awk -F'\t' -v kw="$TITLE_REGEX" '
+            # ltext: 小写版,用于关键字匹配(中文不变,英文转小写)
+            { text[NR]=$1; ltext[NR]=tolower($1); x[NR]=$2; y[NR]=$3; w[NR]=$4; h[NR]=$5 }
             END {
                 for (i=1; i<=NR; i++) {
                     if (text[i] !~ /^[0-9]+-[0-9]+K[ \t]*$/) continue
                     sy = y[i]
+                    title = ""
+                    company = ""
+                    company_x = 9999
                     for (j=1; j<=NR; j++) {
                         if (j == i) continue
-                        if (y[j] < sy-25 || y[j] > sy+25) continue
-                        if (text[j] ~ kw) {
-                            print text[i]"\t"x[i]"\t"y[i]"\t"w[i]"\t"h[i]"\t"text[j]
-                            break
+                        # 标题:同行 ±25,x<400,关键字大小写不敏感
+                        if (title == "" && y[j] >= sy-25 && y[j] <= sy+25 && x[j] < 400 && ltext[j] ~ kw) {
+                            title = text[j]
                         }
+                        # 公司行:标题下方 35-130px(放宽以覆盖长标题换行),左侧
+                        # 必须像公司行(含「轮/融资/X-Y人/已上市」),避免误抓到标题第二行
+                        if (y[j] > sy+35 && y[j] < sy+130 && x[j] < 400 && x[j] < company_x \
+                            && text[j] ~ /轮|融资|[0-9]+人|已上市/) {
+                            company = text[j]
+                            company_x = x[j]
+                        }
+                    }
+                    if (title != "") {
+                        print text[i]"\t"x[i]"\t"y[i]"\t"w[i]"\t"h[i]"\t"title"\t"company
                     }
                 }
             }
-        ' "$txt" | sort -t$'\t' -k3 -n | head -1)
+        ' "$txt" | sort -t$'\t' -k3 -n)
 
-        if [[ -z "$matched" ]] || (( skip >= 2 )); then
-            reason="屏幕无匹配标题的岗位"
+        # 遍历命中行,跳过已沟通公司,取第一个未沟通的
+        selected=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            comp_raw=$(echo "$line" | cut -f7)
+            # 取第一个空格前的内容做去重 key(去掉 "X-Y人 X轮 行业" 等后缀)
+            comp_key=$(echo "$comp_raw" | awk '{print $1}')
+            if is_contacted "$comp_key"; then
+                t=$(echo "$line" | cut -f6)
+                echo "    ⊘ 跳过已沟通公司 '$comp_key' (岗位:'$t')"
+                continue
+            fi
+            selected="$line"
+            break
+        done <<< "$matches"
+
+        if [[ -z "$selected" ]] || (( skip >= 2 )); then
+            reason="屏幕无新岗位(已沟通已跳过或无标题命中)"
             (( skip >= 2 )) && reason="连续 $skip 次卡同位置/无沟通按钮"
             ((refresh++))
             echo "    · $reason → 下拉刷新 ($refresh/$MAX_REFRESH)"
@@ -195,15 +269,18 @@ for kw in "${KEYWORDS[@]}"; do
             continue
         fi
 
-        salary_line=$(echo "$matched" | cut -f1-5)
-        title=$(echo "$matched" | cut -f6)
+        salary_line=$(echo "$selected" | cut -f1-5)
+        title=$(echo "$selected" | cut -f6)
+        company_raw=$(echo "$selected" | cut -f7)
+        company=$(echo "$company_raw" | awk '{print $1}')
+        [[ -z "$company" ]] && company="(未识别)"
 
-        echo "  ─── 第 $((clicked+1)) / $PER_KW 个岗位(命中标题:'$title')───"
+        echo "  ─── 第 $((clicked+1)) / $PER_KW 个岗位(标题:'$title' / 公司:'$company')───"
         tap_line "$salary_line"
         hwait
 
         snap_ocr "$png" "$txt"
-        # 只点「立即沟通」,「继续沟通」表示已聊过 → 跳过(避免重发)
+        # 只点「立即沟通」;「继续沟通」=已聊过,跳过避免重发
         btn=$(awk -F'\t' '$1 ~ /立即沟通/' "$txt" | head -1)
         if [[ -z "$btn" ]]; then
             echo "    ✗ 没找到立即沟通(可能已沟通过/页面没加载好)"
@@ -216,6 +293,12 @@ for kw in "${KEYWORDS[@]}"; do
         hwait
         ((clicked++))
         skip=0
+
+        # 记录已沟通(同进程后续 is_contacted 也能查到)
+        if [[ "$company" != "(未识别)" && "$DRY_RUN" == "0" ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] | $company | $title" >> "$CONTACTED_FILE"
+            echo "    ✓ 已记录:$company"
+        fi
 
         back_to_main
         hwait

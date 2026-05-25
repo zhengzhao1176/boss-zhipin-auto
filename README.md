@@ -6,12 +6,14 @@ Boss 直聘 Android 端**多关键词傻瓜式自动打招呼**脚本 —— 纯
 
 按顺序遍历配置的关键词,每个关键词:
 
-1. 点顶部 chip(`全栈工` / `JavaScript` / `Node` …)
+1. 点顶部 chip(`全栈工` / `JavaScript` / `Node` …;主页 chip 栏不全时自动 seed-tap + 左右横扫展开历史)
 2. 切「最新」tab
 3. 下拉刷新
-4. **只点标题命中关键字眼的岗位**(默认:`全栈` / `Node` / `PHP` / `JavaScript`,大小写不敏感)
-5. 点「立即沟通」(自动跳过「继续沟通」—— 已沟通过的不重发)
-6. 凑不够 N 条就**自动下拉刷新继续**,最多刷新 5 次
+4. **只点标题命中关键字眼的岗位**(默认:`全栈 / node / php / javascript / ai`,**大小写不敏感**,含 `Node.js / NODE.JS / AIGC / AIOps`)
+5. **检查公司是否已沟通过**(读 `boss_contacted.txt`,命中跳过)
+6. 点「立即沟通」(自动跳过「继续沟通」—— 已沟通过的不重发)
+7. 成功发出后**追加 `[时间] | 公司名 | 岗位` 到 `boss_contacted.txt`**
+8. 凑不够 N 条就自动下拉刷新继续,最多刷新 5 次
 
 完整闭环,人类节奏(每步 5-10s 随机等待)。
 
@@ -43,10 +45,11 @@ KEYWORDS=("全栈工" "JavaScript" "Node")
 # 设备序列号(adb devices 看)
 DEVICE="${DEVICE:-Q4G6NRGYX4IZJ7QG}"
 
-# 岗位标题必须命中下列正则才点击(同 y 行任意文字命中即可)
-# 默认:全栈 / Node / PHP / JavaScript / AI(含 AIGC, AIOps 等)
-# AI 用左单词边界(前面必须不是字母),避免误伤 Trainee / Captain / Detail / Email
-TITLE_REGEX='全栈|[Nn]ode|[Pp][Hh][Pp]|[Jj]ava[Ss]cript|(^|[^A-Za-z])[Aa][Ii]'
+# 岗位标题必须命中下列正则才点击
+# 匹配时整段先转小写,所以英文 pattern 全部写小写就是大小写不敏感
+# 默认:全栈 / node(含 Node.js / NODE.JS / NodeJS)/ php / javascript / ai(含 AIGC, AIOps)
+# AI 用左单词边界,避免误伤 trainee / captain / detail / email
+TITLE_REGEX='全栈|node|php|javascript|(^|[^a-z])ai'
 
 # 凑不够 PER_KW 条时最多下拉刷新次数
 MAX_REFRESH=5
@@ -150,7 +153,9 @@ OCR 在某些屏幕状态下会把「最新」误识别为 `I 取` / `1 取`。�
 ## 文件
 
 - `boss.sh` — 主脚本,一切都在里面(含内嵌 Swift OCR)
-- `boss_contacted.txt` — 早期版本的历史打招呼名单(现已不再写入)
+- `boss_contacted.txt` — 已沟通公司历史,脚本自动追加并用于去重(命中已记录公司自动跳过)
+  - 格式:`[YYYY-MM-DD HH:MM:SS] | 公司名 | 岗位`
+  - `#` 开头的行被忽略,可手动编辑
 
 ## 警告
 
